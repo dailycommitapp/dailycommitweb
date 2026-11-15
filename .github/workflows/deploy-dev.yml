@@ -1,0 +1,163 @@
+name: Deploy DailyCommit Dev
+
+on:
+  push:
+    branches: [dailycommit-dev]
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/deploy-dev.yml
+      - docker-compose.dev.yml
+      - deploy/dev/**
+      - tests/deployment/**
+
+permissions:
+  contents: read
+
+# Never cancel an in-flight VM update/migration. A VM-side lock also serializes writers.
+concurrency:
+  group: dailycommit-dev-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'deployment' }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate dev deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate scripts and deployment safety
+        run: |
+          bash -n deploy/dev/deploy.sh
+          python3 -m unittest discover -s tests/deployment -v
+          python3 -m py_compile deploy/dev/validate_env.py deploy/dev/database.py
+      - name: Validate Compose with synthetic credentials only
+        env:
+          DAILYCOMMIT_IMAGE: ghcr.io/dailycommitapp/dailycommitweb:validation-only
+        run: |
+          staging=$(mktemp -d)
+          trap 'rm -rf "$staging"' EXIT
+          cp docker-compose.dev.yml "$staging/"
+          cp deploy/dev/Caddyfile "$staging/Caddyfile"
+          touch "$staging/app.env" "$staging/db.env" "$staging/redis.env"
+          docker compose --project-directory "$staging" -f "$staging/docker-compose.dev.yml" config --quiet
+
+      - name: Validate Caddy configuration without starting HTTPS
+        run: |
+          docker run --rm --network none \
+            -v "$PWD/deploy/dev/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.11-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+  build:
+    name: Build and publish dev image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dailycommit-dev'
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Determine repository image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Sign in to this repository's registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build public/community application image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            LEARNHOUSE_PUBLIC=true
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ steps.image.outputs.name }}:dev
+            ${{ steps.image.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=DailyCommit Dev
+          cache-from: type=gha,scope=dailycommit-dev-amd64
+          cache-to: type=gha,mode=max,scope=dailycommit-dev-amd64
+
+  deploy:
+    name: Update Azure dev VM
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: dev
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate settings and deploy over verified SSH
+        shell: bash
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          DEV_ENV_JSON: ${{ secrets.DEV_ENV_JSON }}
+          DEV_PUBLIC_URL: ${{ vars.DEV_PUBLIC_URL }}
+          IMAGE_NAME: ${{ needs.build.outputs.image }}
+          IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          [[ "$VM_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo 'VM_HOST is missing/invalid'; exit 1; }
+          [[ "$VM_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo 'VM_USER is missing/invalid'; exit 1; }
+          [[ "$IMAGE_NAME" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+$ ]] || exit 1
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || exit 1
+          [[ -n "$VM_SSH_KEY" && -n "$VM_KNOWN_HOSTS" && -n "$DEV_PUBLIC_URL" ]] || { echo 'SSH trust/key or DEV_PUBLIC_URL is missing'; exit 1; }
+          work=$(mktemp -d "$RUNNER_TEMP/dailycommit-deploy.XXXXXX")
+          release="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          remote="/opt/dailycommit/.incoming/$release"
+          remote_ready=false
+          cleanup() {
+            if [[ "$remote_ready" == true ]]; then
+              ssh "${ssh_options[@]}" "$VM_USER@$VM_HOST" "rm -rf -- '$remote'" || true
+            fi
+            rm -rf "$work"
+          }
+          trap cleanup EXIT
+          mkdir -p "$work/bundle/deploy/dev"
+          cp docker-compose.dev.yml "$work/bundle/"
+          cp deploy/dev/Caddyfile "$work/bundle/Caddyfile"
+          cp deploy/dev/*.py deploy/dev/deploy.sh "$work/bundle/deploy/dev/"
+          python3 deploy/dev/validate_env.py --output "$work/bundle" --public-url "$DEV_PUBLIC_URL"
+          printf '%s\n' "$VM_SSH_KEY" > "$work/key"
+          printf '%s\n' "$VM_KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 600 "$work/key" "$work/known_hosts"
+          ssh-keygen -y -P '' -f "$work/key" >/dev/null
+          ssh_options=(-i "$work/key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$work/known_hosts" -o ConnectTimeout=20 -o ServerAliveInterval=30 -o ServerAliveCountMax=5)
+          tar -C "$work/bundle" -czf "$work/bundle.tgz" .
+          ssh "${ssh_options[@]}" "$VM_USER@$VM_HOST" "umask 077; mkdir -p '$remote'"
+          remote_ready=true
+          scp "${ssh_options[@]}" "$work/bundle.tgz" "$VM_USER@$VM_HOST:$remote/bundle.tgz"
+          set +e
+          ssh "${ssh_options[@]}" "$VM_USER@$VM_HOST" "set -e; umask 077; tar --no-same-owner -xzf '$remote/bundle.tgz' -C '$remote'; bash '$remote/deploy/dev/deploy.sh' '$IMAGE_NAME@$IMAGE_DIGEST' '$GITHUB_SHA'"
+          result=$?
+          # The EXIT trap removes private transient secrets on success and failure.
+          exit "$result"

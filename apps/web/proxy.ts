@@ -250,6 +250,17 @@ export default async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl
   const fullhost = req.headers.get('host')
 
+  // Keep public marketing outside the authenticated organization layouts.
+  if ((pathname === '/' || pathname === '/welcome') && !(await isAdminSubdomain(fullhost, instance))) {
+    const resolved = await resolveTenant(req, instance)
+    const requestHeaders = tenantRequestHeaders(req, resolved, instance)
+    requestHeaders.set('x-dailycommit-public-org', resolved.slug)
+    const response = NextResponse.rewrite(new URL(`/welcome${search}`, req.url), { request: { headers: requestHeaders } })
+    setOrgCookies(response, resolved, instance)
+    setInstanceCookies(response, instance)
+    return response
+  }
+
   // SEO: canonicalize mixed-case top-level route names (/Login → /login). Scoped
   // to KNOWN static routes only so it never lowercases data-bearing segments
   // (org slugs, course/activity UUIDs, media paths).
@@ -329,7 +340,7 @@ export default async function proxy(req: NextRequest) {
   // the picker links back there, so the picker is a dead step. Every sign-in,
   // signup and verify path defaults to /home; send them all to the org instead.
   if (instance.tenancy === 'single' && pathname === '/home') {
-    return NextResponse.redirect(new URL(`/${search}`, req.url))
+    return NextResponse.redirect(new URL(`/courses${search}`, req.url))
   }
 
   const HUB_ROOT_PATHS = ['/home', '/organizations', '/account', '/billing', '/subscriptions', '/new']
@@ -365,9 +376,8 @@ export default async function proxy(req: NextRequest) {
     // page itself re-verifies, so this is a best-effort UX shortcut). Not when
     // they arrive with a pending second factor: a sign-in link for another
     // account hands its 2FA step over here, and bouncing would drop it.
-    if (pathname === '/login' && hasSession && !req.nextUrl.searchParams.has('mfa_token')) {
-      return NextResponse.redirect(new URL('/home', req.url))
-    }
+    // The login page redirects only after validating the actual session.
+    // A stale or forged marker must not loop between /login and protected LMS.
 
     const resolved = await resolveTenant(req, instance)
 
@@ -576,6 +586,7 @@ export default async function proxy(req: NextRequest) {
   // -------------------------------------------------------------------------
   const resolved = await resolveTenant(req, instance)
   const requestHeaders = tenantRequestHeaders(req, resolved, instance)
+  requestHeaders.set('x-dailycommit-return-to', `${pathname}${search}`)
   // `${search}` is load-bearing: a rewrite destination built from an absolute
   // path drops the base URL's query, and Next treats the destination's search
   // as the request's. Every other branch above appends it; this one did not, so

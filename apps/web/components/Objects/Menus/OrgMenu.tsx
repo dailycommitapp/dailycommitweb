@@ -49,6 +49,7 @@ import {
 } from '@components/ui/tooltip'
 import { useLHAnalytics, AnalyticsEvent } from '@services/analytics'
 import { Keys } from '@components/Objects/Shortcuts/Kbd'
+import DailyCommitBrand from '@components/Brand/DailyCommitBrand'
 
 export const OrgMenu = (props: any) => {
   const orgslug = props.orgslug
@@ -153,37 +154,37 @@ export const OrgMenu = (props: any) => {
         }}
       >
         <div className="flex items-center justify-between w-full max-w-(--breakpoint-2xl) mx-auto px-4 sm:px-6 lg:px-8 h-full">
-          <div className="flex items-center space-x-5 md:w-auto w-full">
-            <div className="logo flex md:w-auto w-full justify-center">
+          <div className="flex items-center space-x-5 xl:w-auto w-full">
+            <div className="logo flex xl:w-auto w-full justify-center">
               <Link href={getUriWithOrg(orgslug, '/')}>
                 <div className="flex w-auto h-9 rounded-md items-center m-auto py-1 justify-center">
                   {org?.logo_image ? (
                     <img
                       src={`${getOrgLogoMediaDirectory(org.org_uuid, org?.logo_image)}`}
-                      alt="Learnhouse"
+                      alt="DailyCommit"
                       style={{ width: 'auto', height: '100%' }}
                       className="rounded-md"
                     />
                   ) : (
-                    <LearnHouseLogo logoFilter={colors.logoFilter} />
+                    <DailyCommitBrand />
                   )}
                 </div>
               </Link>
             </div>
-            <div className="hidden md:flex">
+            <div className="hidden xl:flex">
               <MenuLinks orgslug={orgslug} primaryColor={primaryColor} />
             </div>
           </div>
 
           {/* Search Section */}
-          <div className="hidden md:flex flex-1 justify-center max-w-lg px-4">
+          <div className="hidden xl:flex flex-1 min-w-0 justify-center max-w-[220px] px-3">
             <SearchTrigger className="w-full" primaryColor={primaryColor} />
           </div>
 
           <div className="flex items-center space-x-2">
             {/* Progress / Trail */}
             <AuthenticatedClientElement checkMethod="authentication">
-              <div className="hidden md:flex">
+              <div className="hidden xl:flex">
                 <TooltipProvider delayDuration={0}>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -206,7 +207,7 @@ export const OrgMenu = (props: any) => {
             {/* Boards */}
             {rf?.boards?.enabled && (
               <AuthenticatedClientElement checkMethod="authentication">
-                <div className="hidden md:flex">
+                <div className="hidden xl:flex">
                   <TooltipProvider delayDuration={0}>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -230,7 +231,7 @@ export const OrgMenu = (props: any) => {
             {/* AI Copilot */}
             {rf?.ai?.enabled && config?.admin_toggles?.ai?.copilot_enabled !== false && (
               <AuthenticatedClientElement checkMethod="authentication">
-                <div className="hidden md:flex">
+                <div className="hidden xl:flex">
                   <CopilotMenuButton
                     orgslug={orgslug}
                     iconBtnClass={colors.iconBtn}
@@ -244,7 +245,7 @@ export const OrgMenu = (props: any) => {
             )}
             {/* Dashboard Dropdown - Only visible to admins */}
             {session?.status === 'authenticated' && rights?.dashboard?.action_access && (
-              <div className="hidden md:flex">
+              <div className="hidden xl:flex">
                 <DropdownMenu>
                   <TooltipProvider delayDuration={0}>
                     <Tooltip>
@@ -291,7 +292,7 @@ export const OrgMenu = (props: any) => {
 
             {/* Help Dropdown - Only visible to admins/maintainers/instructors */}
             {session?.status === 'authenticated' && rights?.dashboard?.action_access && (
-              <div className="hidden md:flex">
+              <div className="hidden xl:flex">
                 <DropdownMenu>
                   <TooltipProvider delayDuration={0}>
                     <Tooltip>
@@ -362,11 +363,11 @@ export const OrgMenu = (props: any) => {
               </div>
             )}
 
-            <div className="hidden md:flex">
+            <div className="hidden xl:flex">
               <HeaderProfileBox primaryColor={primaryColor} />
             </div>
             <button
-              className={`md:hidden focus:outline-hidden ${colors.text}`}
+              className={`xl:hidden focus:outline-hidden ${colors.text}`}
               onClick={toggleMenu}
             >
               {isMenuOpen ? (
@@ -383,7 +384,7 @@ export const OrgMenu = (props: any) => {
         </div>
       </nav>
       <div
-        className={`fixed inset-x-0 bg-white/80 backdrop-blur-lg md:hidden shadow-lg transition-all duration-300 ease-in-out ${
+        className={`fixed inset-x-0 bg-white/80 backdrop-blur-lg xl:hidden shadow-lg transition-all duration-300 ease-in-out ${
           isMenuOpen ? 'opacity-100' : '-top-full opacity-0'
         }`}
         style={{
@@ -557,17 +558,5 @@ const CopilotMenuButton = ({
         </button>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-}
-
-const LearnHouseLogo = ({ logoFilter }: { logoFilter: string }) => {
-  return (
-    <Image
-      src="/lrn-text.svg"
-      alt="LearnHouse logo"
-      width={133}
-      height={40}
-      style={{ height: 'auto', filter: logoFilter }}
-    />
   )
 }

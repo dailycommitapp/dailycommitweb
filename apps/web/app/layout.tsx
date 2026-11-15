@@ -1,7 +1,13 @@
 import '../styles/globals.css'
 import React from 'react'
+import type { Metadata } from 'next'
 import Providers from '@components/Providers'
 import { Wix_Madefor_Text, Tajawal } from 'next/font/google'
+
+export const metadata: Metadata = {
+  title: 'DailyCommit',
+  icons: { icon: '/dailycommit-icon.svg' },
+}
 
 const wixMadeforText = Wix_Madefor_Text({
   subsets: ['latin'],
@@ -57,7 +63,7 @@ export default function RootLayout({
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
         <script src="/embed-bg.js" />
       </head>
-      <body suppressHydrationWarning>
+      <body className="dc-ui" suppressHydrationWarning>
         <Providers>
           <main className="animate-fade-in">
             {children}

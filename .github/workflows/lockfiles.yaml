@@ -25,6 +25,7 @@ on:
   push:
     branches:
       - dev
+      - dailycommit-dev
     paths:
       - "**/package.json"
       - "**/bun.lock"
@@ -78,7 +79,7 @@ jobs:
 
       # No setup-python step: `uv lock` resolves from package metadata and
       # never needs an interpreter.
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.13.6"
           enable-cache: true

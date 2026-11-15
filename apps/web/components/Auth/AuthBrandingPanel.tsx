@@ -2,7 +2,7 @@
 import React from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
-import learnhouseIcon from 'public/learnhouse_bigicon_1.png'
+import learnhouseIcon from 'public/dailycommit-icon.svg'
 import { getOrgAuthBackgroundMediaDirectory } from '@services/media/media'
 import OrgSquareLogo from '@components/Objects/Org/OrgSquareLogo'
 import { getUriWithOrg } from '@services/config/config'
@@ -29,7 +29,7 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
     unsplash_photographer_url = '',
     unsplash_photo_url = '',
   } = authBranding
-  const UNSPLASH_UTM = '?utm_source=LearnHouse&utm_medium=referral'
+  const UNSPLASH_UTM = '?utm_source=DailyCommit&utm_medium=referral'
   const withUtm = (url: string) => (url ? `${url}${UNSPLASH_UTM}` : '')
 
   // Check if org has enterprise plan - hide LearnHouse branding for enterprise users
@@ -44,7 +44,7 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
   const getBackgroundStyle = (): React.CSSProperties => {
     if (noOrg) {
       return {
-        backgroundImage: 'url(/auth-default.png)',
+        background: '#181b17',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
       }
@@ -52,7 +52,7 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
     if (background_type === 'gradient' || !background_image) {
       // Keep the original black gradient
       return {
-        background: 'linear-gradient(041.61deg, #202020 7.15%, #000000 90.96%)',
+        background: '#181b17',
       }
     }
     if (background_type === 'custom' && background_image) {
@@ -70,15 +70,15 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
       }
     }
     return {
-      background: 'linear-gradient(041.61deg, #202020 7.15%, #000000 90.96%)',
+      background: '#181b17',
     }
   }
 
   const displayMessage = welcome_message || welcomeText || ''
   // No-org platform copy (defaults mirror the platform login illustration).
-  const noOrgTitle = title || 'Welcome back to LearnHouse.'
+  const noOrgTitle = title || 'Welcome back to DailyCommit.'
   const noOrgSubtitle =
-    subtitle || 'Pick up where you left off. Your courses, students, and tools are waiting.'
+    subtitle || 'One lesson. One new skill. One step closer to the developer you want to be.'
   // Treat the no-org illustration like a photo background: dark scrim, no
   // blueprint-grid overlay.
   const hasCustomBackground = noOrg || (background_type !== 'gradient' && background_image)
@@ -86,7 +86,7 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
   return (
     <div className="relative h-full w-full">
       {/* Inset rounded card (platform-style) */}
-      <div className="absolute inset-16 rounded-2xl overflow-hidden">
+      <div className="dc-auth-panel absolute inset-8 lg:inset-12 overflow-hidden">
         {/* Base layer: org's chosen background (gradient | custom | unsplash) */}
         <div className="absolute inset-0" style={getBackgroundStyle()} />
 
@@ -148,8 +148,8 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
             <div className="login-topbar">
               <Link prefetch href="https://learnhouse.app" target="_blank">
                 <img
-                  src="/lrn.svg"
-                  alt="LearnHouse"
+                  src="/dailycommit-icon.svg"
+                  alt="DailyCommit"
                   width={30}
                   height={30}
                   className={cn(
@@ -192,7 +192,7 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
                             width={96}
                             height={96}
                             src={learnhouseIcon}
-                            alt="LearnHouse"
+                            alt="DailyCommit"
                             className="object-contain"
                           />
                         }
@@ -202,7 +202,7 @@ export default function AuthBrandingPanel({ org, welcomeText, title, subtitle }:
 
                   {/* Text content */}
                   <div className="space-y-1">
-                    <h1 className="font-black text-3xl tracking-tight">{org?.name || 'LearnHouse'}</h1>
+                    <h1 className="font-black text-3xl tracking-tight">{org?.name || 'DailyCommit'}</h1>
                     {displayMessage && (
                       <p className={cn(
                         "text-lg max-w-sm leading-relaxed",

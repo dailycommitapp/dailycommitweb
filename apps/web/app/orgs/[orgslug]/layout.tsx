@@ -9,6 +9,11 @@ import Footer from '@components/Footer/Footer'
 import CompleteSignupFields from '@components/Auth/CompleteSignupFields'
 import { getOrganizationContextInfo } from '@services/organizations/orgs'
 import { getOrgFaviconMediaDirectory } from '@services/media/media'
+import { getServerSession } from '@/lib/auth/server'
+import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
+import { safeInternalPath } from '@services/security/url'
+import LMSAccessGate from '@components/Security/LMSAccessGate'
 
 export async function generateMetadata({
   params,
@@ -38,9 +43,14 @@ export default async function RootLayout(props: {
   params: Promise<{ orgslug: string }>
 }) {
   const params = await props.params
+  const session = await getServerSession()
+  if (!session) {
+    const next = safeInternalPath((await headers()).get('x-dailycommit-return-to'), '/courses')
+    redirect(`/login?${new URLSearchParams({ next })}`)
+  }
 
   return (
-    <div>
+    <LMSAccessGate><div>
       <OrgProvider orgslug={params.orgslug}>
         <OrgLanguageSync />
         <NextTopLoader color="#2e2e2e" initialPosition={0.3} height={4} easing={'ease'} speed={500} showSpinner={false} />
@@ -49,6 +59,6 @@ export default async function RootLayout(props: {
         {props.children}
         <Footer />
       </OrgProvider>
-    </div>
+    </div></LMSAccessGate>
   )
 }
