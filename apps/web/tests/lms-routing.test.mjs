@@ -10,11 +10,11 @@ beforeEach(() => {
   globalThis.fetch = async () => Response.json({ multi_org_enabled: false, default_org_slug: 'default', mode: 'oss', tenancy: 'single', frontend_domain: 'localhost:3000', top_domain: 'localhost' })
 })
 afterEach(() => { globalThis.fetch = originalFetch })
-describe('Public landing and LMS routing', () => {
-  test('root serves marketing outside the organization layouts', async () => {
+describe('LMS routing', () => {
+  test('root uses the existing organization homepage routing', async () => {
     const response = await proxy(request('/'))
-    expect(new URL(response.headers.get('x-middleware-rewrite')).pathname).toBe('/welcome')
-    expect(response.headers.get('x-middleware-request-x-dailycommit-public-org')).toBe('default')
+    expect(new URL(response.headers.get('x-middleware-rewrite')).pathname).toBe('/orgs/default/')
+    expect(response.headers.get('x-middleware-request-x-dailycommit-public-org')).toBeNull()
   })
   test('single-organization post-login destination goes to courses', async () => {
     const response = await proxy(request('/home'))
