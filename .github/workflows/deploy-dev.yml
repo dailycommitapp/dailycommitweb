@@ -5,11 +5,7 @@ on:
     branches: [dailycommit-dev]
   workflow_dispatch:
   pull_request:
-    paths:
-      - .github/workflows/deploy-dev.yml
-      - docker-compose.dev.yml
-      - deploy/dev/**
-      - tests/deployment/**
+    branches: [dailycommit-dev]
 
 permissions:
   contents: read
@@ -22,6 +18,7 @@ concurrency:
 jobs:
   validate:
     name: Validate dev deployment
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -32,7 +29,7 @@ jobs:
         run: |
           bash -n deploy/dev/deploy.sh
           python3 -m unittest discover -s tests/deployment -v
-          python3 -m py_compile deploy/dev/validate_env.py deploy/dev/database.py
+          python3 -m py_compile deploy/dev/validate_env.py deploy/dev/database.py deploy/dev/verify_pr_gate.py
       - name: Validate Compose with synthetic credentials only
         env:
           DAILYCOMMIT_IMAGE: ghcr.io/dailycommitapp/dailycommitweb:validation-only
@@ -50,10 +47,27 @@ jobs:
             -v "$PWD/deploy/dev/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2.11-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
+  verify-pr-gate:
+    name: Verify PR protections
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dailycommit-dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require passing checks and an up-to-date reviewed PR before deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/rules/branches/dailycommit-dev?per_page=100" --jq 'add' > "$RUNNER_TEMP/dev-branch-rules.json"
+          python3 deploy/dev/verify_pr_gate.py "$RUNNER_TEMP/dev-branch-rules.json"
+
   build:
     name: Build and publish dev image
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dailycommit-dev'
-    needs: validate
+    needs: verify-pr-gate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

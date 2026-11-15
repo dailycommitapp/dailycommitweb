@@ -5,13 +5,9 @@ on:
   push:
     branches:
       - dev
-      - dailycommit-dev
     paths:
       - "apps/api/**"
   pull_request:
-    paths:
-      - "apps/api/**"
-
 # See api-lint.yaml: one live run per PR, dev runs always finish.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -52,14 +48,6 @@ jobs:
         working-directory: apps/api
         env:
           TESTING: "true"
-
-      - name: Upload API coverage to Codecov
-        uses: codecov/codecov-action@v7.1.1
-        with:
-          files: apps/api/coverage.xml
-          flags: api
-          name: api-coverage
-          fail_ci_if_error: true
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v7.0.2

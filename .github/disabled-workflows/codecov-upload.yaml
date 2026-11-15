@@ -1,0 +1,13 @@
+# Archived workflow STEP, not a standalone workflow.
+# GitHub Actions does not execute files in this directory.
+# To re-enable: configure the CODECOV_TOKEN repository secret, then move this
+# step into jobs.test.steps in .github/workflows/api-tests.yaml and pass the
+# token to the action with: token: ${{ secrets.CODECOV_TOKEN }}
+steps:
+  - name: Upload API coverage to Codecov
+    uses: codecov/codecov-action@v7.1.1
+    with:
+      files: apps/api/coverage.xml
+      flags: api
+      name: api-coverage
+      fail_ci_if_error: true

@@ -3,14 +3,10 @@ on:
   push:
     branches:
       - dev
-      - dailycommit-dev
     paths:
       - "apps/web/**"
       - ".bun-version"
   pull_request:
-    paths:
-      - "apps/web/**"
-      - ".bun-version"
 permissions:
   contents: read
 
