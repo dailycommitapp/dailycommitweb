@@ -258,8 +258,8 @@ function DashLeftMenu() {
             </div>
           ) : (
             <img
-              src="/lrn-dash.svg"
-              alt="Learnhouse logo"
+              src="/dailycommit-icon.svg"
+              alt="DailyCommit logo"
               className="h-8 w-8"
             />
           )}

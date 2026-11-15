@@ -139,3 +139,19 @@ media/
 README.md
 docs/
 *.md
+
+# DailyCommit VM deployment: credentials and runtime data never enter Git/build context.
+/deploy/dev/*.env
+/app.env
+/db.env
+/redis.env
+/.release.env
+/.registry-auth.json
+/secret-fingerprints.json
+/backups/
+/deploy-logs/
+/.incoming/
+/.docker-auth.*/
+/.bootstrap-pending
+/current-image.txt
+/current-commit.txt

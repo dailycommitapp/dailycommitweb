@@ -1,0 +1,5 @@
+# Automatic public certificates and HTTP -> HTTPS redirects.
+# Caddy handles WebSocket upgrades and forwards the original host/protocol.
+dev.dailycommit.co.za {
+	reverse_proxy app:80
+}

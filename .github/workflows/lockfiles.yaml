@@ -25,6 +25,7 @@ on:
   push:
     branches:
       - dev
+      - dailycommit-dev
     paths:
       - "**/package.json"
       - "**/bun.lock"

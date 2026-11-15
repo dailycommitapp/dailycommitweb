@@ -207,7 +207,7 @@ function PlayerLogo() {
   const visible = usePlayer((s) => s.controlsVisible)
   return (
     <img
-      src="/lrn.svg"
+      src="/dailycommit-icon.svg"
       alt=""
       aria-hidden="true"
       draggable={false}

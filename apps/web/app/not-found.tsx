@@ -1,7 +1,7 @@
 import { ArrowRight } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
-import learnhouseIcon from 'public/black_logo.png'
+import learnhouseIcon from 'public/dailycommit-icon.svg'
 
 // Rendered per request, not prerendered. Next 16 answers an unknown Server
 // Action posted to a missing path from the static 404 entry, finds a text/plain

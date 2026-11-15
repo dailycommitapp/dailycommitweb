@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - dev
+      - dailycommit-dev
     paths:
       - "apps/api/**"
   pull_request:
