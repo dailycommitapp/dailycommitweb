@@ -250,6 +250,17 @@ export default async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl
   const fullhost = req.headers.get('host')
 
+  // Keep public marketing outside the authenticated organization layouts.
+  if ((pathname === '/' || pathname === '/welcome') && !(await isAdminSubdomain(fullhost, instance))) {
+    const resolved = await resolveTenant(req, instance)
+    const requestHeaders = tenantRequestHeaders(req, resolved, instance)
+    requestHeaders.set('x-dailycommit-public-org', resolved.slug)
+    const response = NextResponse.rewrite(new URL(`/welcome${search}`, req.url), { request: { headers: requestHeaders } })
+    setOrgCookies(response, resolved, instance)
+    setInstanceCookies(response, instance)
+    return response
+  }
+
   // SEO: canonicalize mixed-case top-level route names (/Login → /login). Scoped
   // to KNOWN static routes only so it never lowercases data-bearing segments
   // (org slugs, course/activity UUIDs, media paths).
