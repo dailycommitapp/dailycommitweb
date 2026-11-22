@@ -3,16 +3,14 @@ name: Validate Docker Builds
 # The image only ever contains apps/web, apps/collab and apps/api (see
 # Dockerfile). A README edit or a CLI-only change cannot alter the image, so it
 # does not need one. Deliberately a deny-list rather than an allow-list:
-# anything new at the repo root still triggers a build. The list is spelled out
-# twice because GitHub Actions does not support YAML anchors, so keep both copies
-# in sync.
+# anything new at the repo root still triggers a push build. PRs always build
+# so branch protection receives every required check.
 on:
   push:
     branches:
       - prod
       - dev
       - main
-      - dailycommit-dev
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -21,19 +19,6 @@ on:
       - '.github/ISSUE_TEMPLATE/**'
       - 'LICENSE'
   pull_request:
-    branches:
-      - prod
-      - dev
-      - main
-      - dailycommit-dev
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'apps/cli/**'
-      - 'apps/e2e/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE'
-
 permissions:
   contents: read
 

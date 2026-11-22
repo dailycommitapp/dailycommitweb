@@ -3,12 +3,9 @@ on:
   push:
     branches:
       - dev
-      - dailycommit-dev
     paths:
       - "apps/web/**"
   pull_request:
-    paths:
-      - "apps/web/**"
 permissions:
   contents: read
 

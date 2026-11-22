@@ -8,7 +8,7 @@ These files prepare the HTTPS deployment; updating them does not deploy, change 
 
 A push (including a merged PR) to `dailycommit-dev` runs `.github/workflows/deploy-dev.yml`:
 
-1. Test deployment helpers and validate Compose without real credentials.
+1. Verify that active GitHub rules enforce approving PR review, all required checks and an up-to-date branch. Full CI/deployment tests run on the PR, not again on the merge push. Missing or unreadable rules stop before publishing or contacting the VM.
 2. Build `./Dockerfile` for `linux/amd64`, with `LEARNHOUSE_PUBLIC=true`.
 3. Publish `ghcr.io/<lowercase owner>/<lowercase repository>:sha-<full commit SHA>`, `:dev`, and `:latest`. For this repo the image is `ghcr.io/dailycommitapp/dailycommitweb`. Here `latest` is a **dev alias**, not a production release. Docker tags cannot contain `/`.
 4. Connect to the Ubuntu VM using SSH with a pre-verified host key. Send only the deployment bundle, not a git clone or local database.
@@ -18,7 +18,26 @@ A push (including a merged PR) to `dailycommit-dev` runs `.github/workflows/depl
 8. Stop/recreate the legacy HTTP app as needed to free host port 80. Start Caddy first, then update/wait for the internal app's API/database, frontend and collab readiness. Verify schema heads and the initial admin.
 9. Verify HTTPS certificate trust, hostname and API readiness through Caddy before recording the accepted image/commit. No insecure TLS bypass is used.
 
-PRs touching deployment files run validation only. Manual runs deploy only when the selected ref is `dailycommit-dev`. Workflow concurrency never automatically cancels a live deploy, and `flock` serializes VM updates. The six existing API/web lint/tests, lockfile and community-build workflows also recognize `dailycommit-dev`; their existing behavior is retained. They run independently of deployment. Protect the branch and require the relevant PR checks before merging; deployment does not pretend to wait for independently running workflows. Existing nightly E2E remains independent and still follows its existing published-image configuration.
+Every PR runs API/web tests, lint/type checks, lockfile checks and Docker build validation regardless of file paths. PRs targeting `dailycommit-dev` also run deployment helper/Compose/Caddy validation. These are the pre-merge checks. The six CI workflows no longer run on `dailycommit-dev` pushes, and deployment validation is PR-only; other branches keep their previous push behavior. Existing nightly E2E remains independent and follows its existing published-image configuration. Existing full-project web lint remains report-only for legacy lint debt, with type checks and strict PR lint unchanged.
+
+After approval and merge, only the lightweight `Verify PR protections` job, publishing build and VM deployment run. Runtime migration, backup, health and HTTPS checks remain mandatory on the VM; they are not repeated CI suites. Manual runs are still restricted to `dailycommit-dev` and must pass the same branch-rule guard. Workflow concurrency never automatically cancels a live deployment, and `flock` serializes VM updates.
+
+### Required GitHub rules before deploying
+
+In **Settings → Rules → Rulesets**, edit the active ruleset for `dailycommit-dev`. Keep PR review required, enable **Require status checks to pass**, and enable **Require branches to be up to date before merging**. Do not bypass these protections when merging. The post-merge guard (`deploy/dev/verify_pr_gate.py`) checks active rules through GitHub's read-only branch-rules API using the automatic `GITHUB_TOKEN`; no new secret is required.
+
+Require all these GitHub Actions check names (job names, not workflow names):
+
+- `test` (API Tests), `ruff` (API Lint), `unit` (Web Tests)
+- `next-lint`, `typecheck`
+- `Lockfiles in sync`
+- `Build (linux/amd64)`, `Build (linux/arm64)`
+- `Service image (api)`, `Service image (web)`, `Service image (collab)`
+- `Validate dev deployment`
+
+These names are listed in `REQUIRED_CHECKS` in the guard and must be updated together if CI jobs are renamed. PR workflow-level path filters were removed so a required check cannot stay pending because its entire workflow was skipped. A target-branch update requires updating the PR and letting its checks pass again before merging. This trades repeat checks on merges for GitHub enforcing that the PR was checked against the current target branch.
+
+**Observed configuration:** the branch currently requires approval, but required status checks and the strict up-to-date policy have not been enabled. These local changes do not modify GitHub settings. Once this configuration is merged, deployment intentionally stops until those rules are enabled.
 
 ## One-time VM preparation
 

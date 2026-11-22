@@ -14,18 +14,9 @@ name: Lockfiles
 
 on:
   pull_request:
-    paths:
-      - "**/package.json"
-      - "**/bun.lock"
-      - "apps/api/pyproject.toml"
-      - "apps/api/uv.lock"
-      - ".bun-version"
-      - "scripts/lockfiles.sh"
-      - ".github/workflows/lockfiles.yaml"
   push:
     branches:
       - dev
-      - dailycommit-dev
     paths:
       - "**/package.json"
       - "**/bun.lock"

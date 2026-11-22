@@ -24,6 +24,7 @@ def module(name):
 
 ENV = module("validate_env")
 DATABASE = module("database")
+PR_GATE = module("verify_pr_gate")
 
 
 def secret_values():
@@ -343,7 +344,30 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertIn("password: ${{ secrets.GITHUB_TOKEN }}", workflow)
 
-    def test_existing_checks_recognize_deployment_branch(self):
+    def test_pr_checks_are_not_repeated_before_the_publishing_build(self):
+        workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
+        validation = workflow.split("\n  validate:\n", 1)[1].split(
+            "\n  verify-pr-gate:\n", 1
+        )[0]
+        self.assertIn("if: github.event_name == 'pull_request'", validation)
+        build = workflow.split("\n  build:\n", 1)[1].split("\n  deploy:\n", 1)[0]
+        self.assertIn("    needs: verify-pr-gate\n", build)
+        self.assertNotIn("always()", build)
+        self.assertNotIn("continue-on-error:", workflow)
+        self.assertNotIn("uses: ./.github/workflows/", workflow)
+        self.assertIn("    needs: build\n", workflow.split("\n  deploy:\n", 1)[1])
+        policy = workflow.split("\n  verify-pr-gate:\n", 1)[1].split("\n  build:\n", 1)[
+            0
+        ]
+        self.assertIn("github.ref == 'refs/heads/dailycommit-dev'", policy)
+        self.assertIn("--paginate --slurp", policy)
+        self.assertIn("rules/branches/dailycommit-dev", policy)
+        self.assertIn("verify_pr_gate.py", policy)
+        self.assertNotIn("pytest", policy)
+        pr = workflow.split("  pull_request:\n", 1)[1].split("\npermissions:", 1)[0]
+        self.assertNotIn("paths:", pr)
+
+    def test_ci_always_reports_on_prs_and_does_not_repeat_on_dev_push(self):
         for name in (
             "api-lint.yaml",
             "api-tests.yaml",
@@ -352,9 +376,21 @@ class WorkflowTests(unittest.TestCase):
             "lockfiles.yaml",
             "build-community.yaml",
         ):
-            self.assertIn(
-                "dailycommit-dev", (ROOT / ".github/workflows" / name).read_text()
-            )
+            workflow = (ROOT / ".github/workflows" / name).read_text()
+            self.assertNotIn("dailycommit-dev", workflow)
+            self.assertNotIn("workflow_call:", workflow)
+            self.assertIn("  pull_request:\n", workflow)
+            tail = workflow.split("  pull_request:\n", 1)[1]
+            self.assertFalse(tail.startswith("    "), name + " must not filter PRs")
+
+    def test_api_coverage_stays_active_with_codecov_archived(self):
+        workflow = (ROOT / ".github/workflows/api-tests.yaml").read_text()
+        self.assertNotIn("codecov/codecov-action", workflow)
+        self.assertIn("--cov-fail-under=25", workflow)
+        self.assertIn("--cov-report=xml:coverage.xml", workflow)
+        self.assertIn("path: apps/api/htmlcov/", workflow)
+        archived = (ROOT / ".github/disabled-workflows/codecov-upload.yaml").read_text()
+        self.assertIn("codecov/codecov-action", archived)
 
     def test_compose_data_services_are_not_published(self):
         text = (ROOT / "docker-compose.dev.yml").read_text()
@@ -388,6 +424,61 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('cp deploy/dev/Caddyfile "$staging/Caddyfile"', workflow)
         self.assertIn("--network none", workflow)
         self.assertIn("caddy validate", workflow)
+
+
+class PullRequestGateTests(unittest.TestCase):
+    def rules(self):
+        return [
+            {
+                "type": "pull_request",
+                "parameters": {"required_approving_review_count": 1},
+            },
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [
+                        {"context": name} for name in PR_GATE.REQUIRED_CHECKS
+                    ],
+                },
+            },
+        ]
+
+    def test_complete_strict_reviewed_policy_passes(self):
+        PR_GATE.validate_rules(self.rules())
+
+    def test_absent_weak_or_partial_policies_block_deployment(self):
+        candidates = [[], self.rules()[:1], self.rules()[1:], {}]
+        no_strict = self.rules()
+        no_strict[1]["parameters"]["strict_required_status_checks_policy"] = False
+        candidates.append(no_strict)
+        no_review = self.rules()
+        no_review[0]["parameters"]["required_approving_review_count"] = 0
+        candidates.append(no_review)
+        missing = self.rules()
+        missing[1]["parameters"]["required_status_checks"].pop()
+        candidates.append(missing)
+        for candidate in candidates:
+            with self.subTest(candidate=candidate), self.assertRaises(ValueError):
+                PR_GATE.validate_rules(candidate)
+
+    def test_missing_or_malformed_response_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "rules.json"
+            for content in (None, "not json", "{}", "null"):
+                if content is not None:
+                    path.write_text(content)
+                result = subprocess.run(
+                    [
+                        os.sys.executable,
+                        str(ROOT / "deploy/dev/verify_pr_gate.py"),
+                        str(path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("deployment stopped", result.stderr)
 
 
 if __name__ == "__main__":
