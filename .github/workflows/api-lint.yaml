@@ -5,14 +5,14 @@ on:
       - dev
     paths:
       - "apps/api/**"
-  pull_request:
+  workflow_call:
 permissions:
   contents: read
 
 # Only the newest commit on a PR needs a result. Runs on dev are never
 # cancelled; those are the ones whose result we keep.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: api-lint-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

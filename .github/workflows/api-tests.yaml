@@ -7,10 +7,10 @@ on:
       - dev
     paths:
       - "apps/api/**"
-  pull_request:
-# See api-lint.yaml: one live run per PR, dev runs always finish.
+  workflow_call:
+# PRs are called by ci.yml; direct push triggers retain their existing behavior.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: api-tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
