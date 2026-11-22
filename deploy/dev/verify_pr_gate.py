@@ -5,20 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-REQUIRED_CHECKS = {
-    "test",  # API Tests
-    "ruff",  # API Lint
-    "unit",  # Web Tests
-    "next-lint",
-    "typecheck",
-    "Lockfiles in sync",
-    "Build (linux/amd64)",
-    "Build (linux/arm64)",
-    "Service image (api)",
-    "Service image (web)",
-    "Service image (collab)",
-    "Validate dev deployment",
-}
+REQUIRED_CHECKS = {"CI passed"}
 
 
 def validate_rules(rules):

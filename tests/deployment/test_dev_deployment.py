@@ -7,6 +7,7 @@ import secrets
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -346,10 +347,11 @@ class WorkflowTests(unittest.TestCase):
 
     def test_pr_checks_are_not_repeated_before_the_publishing_build(self):
         workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
-        validation = workflow.split("\n  validate:\n", 1)[1].split(
-            "\n  verify-pr-gate:\n", 1
-        )[0]
-        self.assertIn("if: github.event_name == 'pull_request'", validation)
+        validation = (ROOT / ".github/workflows/validate-dev.yml").read_text()
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("  workflow_call:", validation)
+        self.assertIn("github.base_ref == 'dailycommit-dev'", ci)
+        self.assertNotIn("  pull_request:", workflow)
         build = workflow.split("\n  build:\n", 1)[1].split("\n  deploy:\n", 1)[0]
         self.assertIn("    needs: verify-pr-gate\n", build)
         self.assertNotIn("always()", build)
@@ -364,24 +366,27 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("rules/branches/dailycommit-dev", policy)
         self.assertIn("verify_pr_gate.py", policy)
         self.assertNotIn("pytest", policy)
-        pr = workflow.split("  pull_request:\n", 1)[1].split("\npermissions:", 1)[0]
-        self.assertNotIn("paths:", pr)
 
     def test_ci_always_reports_on_prs_and_does_not_repeat_on_dev_push(self):
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("  pull_request:\n", ci)
+        self.assertNotIn("paths:", ci)
+        self.assertNotIn("paths-ignore:", ci)
+        self.assertNotIn("  push:", ci)
+        self.assertIn("name: CI passed", ci)
+        self.assertIn("if: always()", ci)
         for name in (
-            "api-lint.yaml",
-            "api-tests.yaml",
-            "web-lint.yaml",
-            "web-tests.yaml",
-            "lockfiles.yaml",
-            "build-community.yaml",
+            "api-lint.yaml", "api-tests.yaml", "web-lint.yaml", "web-tests.yaml",
+            "lockfiles.yaml", "build-community.yaml",
         ):
             workflow = (ROOT / ".github/workflows" / name).read_text()
             self.assertNotIn("dailycommit-dev", workflow)
-            self.assertNotIn("workflow_call:", workflow)
-            self.assertIn("  pull_request:\n", workflow)
-            tail = workflow.split("  pull_request:\n", 1)[1]
-            self.assertFalse(tail.startswith("    "), name + " must not filter PRs")
+            self.assertIn("  workflow_call:\n", workflow)
+            self.assertNotIn("  pull_request:", workflow)
+            self.assertIn("uses: ./.github/workflows/" + name, ci)
+            # Called workflows inherit github.workflow from the caller, so
+            # concurrency groups need their own distinct prefix.
+            self.assertNotIn("group: ${{ github.workflow }}-", workflow)
 
     def test_api_coverage_stays_active_with_codecov_archived(self):
         workflow = (ROOT / ".github/workflows/api-tests.yaml").read_text()
@@ -459,9 +464,41 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn("auto_https off", config)
         workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text()
         self.assertIn('cp deploy/dev/Caddyfile "$work/bundle/Caddyfile"', workflow)
-        self.assertIn('cp deploy/dev/Caddyfile "$staging/Caddyfile"', workflow)
-        self.assertIn("--network none", workflow)
-        self.assertIn("caddy validate", workflow)
+        validation = (ROOT / ".github/workflows/validate-dev.yml").read_text()
+        self.assertIn('cp deploy/dev/Caddyfile "$staging/Caddyfile"', validation)
+        self.assertIn("--network none", validation)
+        self.assertIn("caddy validate", validation)
+
+
+class AggregateCITests(unittest.TestCase):
+    required = ("api-tests", "api-lint", "web-tests", "web-lint", "lockfiles", "docker-builds", "dev-validation")
+
+    def run_gate(self, results, dev=True):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        script = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
+        return subprocess.run(
+            ["bash", "-e", "-c", script], capture_output=True, text=True,
+            env=dict(os.environ, RESULTS=json.dumps(results), REQUIRE_DEV_VALIDATION=str(dev).lower()),
+        )
+
+    def test_ci_passed_requires_success_for_every_applicable_job(self):
+        success = {name: {"result": "success"} for name in self.required}
+        self.assertEqual(self.run_gate(success).returncode, 0)
+        for name in self.required:
+            for status in ("failure", "cancelled", "skipped"):
+                results = dict(success, **{name: {"result": status}})
+                with self.subTest(name=name, status=status):
+                    self.assertNotEqual(self.run_gate(results).returncode, 0)
+        other_base = dict(success, **{"dev-validation": {"result": "skipped"}})
+        self.assertEqual(self.run_gate(other_base, dev=False).returncode, 0)
+
+    def test_ci_passed_rejects_incomplete_results(self):
+        success = {name: {"result": "success"} for name in self.required}
+        for name in self.required:
+            incomplete = {key: value for key, value in success.items() if key != name}
+            with self.subTest(missing=name):
+                self.assertNotEqual(self.run_gate(incomplete).returncode, 0)
+        self.assertNotEqual(self.run_gate({}).returncode, 0)
 
 
 class PullRequestGateTests(unittest.TestCase):
@@ -496,6 +533,9 @@ class PullRequestGateTests(unittest.TestCase):
         missing = self.rules()
         missing[1]["parameters"]["required_status_checks"].pop()
         candidates.append(missing)
+        ordinary_test_only = self.rules()
+        ordinary_test_only[1]["parameters"]["required_status_checks"] = [{"context": "test"}]
+        candidates.append(ordinary_test_only)
         for candidate in candidates:
             with self.subTest(candidate=candidate), self.assertRaises(ValueError):
                 PR_GATE.validate_rules(candidate)

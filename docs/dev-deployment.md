@@ -18,26 +18,24 @@ A push (including a merged PR) to `dailycommit-dev` runs `.github/workflows/depl
 8. Stop/recreate the legacy HTTP app as needed to free host port 80. Start Caddy first, then update/wait for the internal app's API/database, frontend and collab readiness. Verify schema heads and the initial admin.
 9. Verify HTTPS certificate trust, hostname and API readiness through Caddy before recording the accepted image/commit. No insecure TLS bypass is used.
 
-Every PR runs API/web tests, lint/type checks, lockfile checks and Docker build validation regardless of file paths. PRs targeting `dailycommit-dev` also run deployment helper/Compose/Caddy validation. These are the pre-merge checks. The six CI workflows no longer run on `dailycommit-dev` pushes, and deployment validation is PR-only; other branches keep their previous push behavior. Existing nightly E2E remains independent and follows its existing published-image configuration. Existing full-project web lint remains report-only for legacy lint debt, with type checks and strict PR lint unchanged.
+Every PR runs the `CI` workflow (`.github/workflows/ci.yml`). It calls the existing API/web tests, lint/type checks, lockfile checks and Docker build validation as reusable workflows, once each, regardless of file paths. PRs targeting `dailycommit-dev` also call `validate-dev.yml` for deployment helper/Compose/Caddy validation. A final job named **CI passed** runs even when a dependency fails, and succeeds only when all applicable jobs succeeded. Failed, cancelled, unexpectedly skipped or missing jobs block it. Dev validation may be skipped only for PRs into another base branch.
 
-After approval and merge, only the lightweight `Verify PR protections` job, publishing build and VM deployment run. Runtime migration, backup, health and HTTPS checks remain mandatory on the VM; they are not repeated CI suites. Manual runs are still restricted to `dailycommit-dev` and must pass the same branch-rule guard. Workflow concurrency never automatically cancels a live deployment, and `flock` serializes VM updates.
+The six reusable checks retain their existing direct push/manual triggers for other branches but no longer have independent PR triggers, preventing duplicate runs. Their concurrency groups use distinct prefixes so sibling workflows do not cancel one another. The lockfile job retains its existing dependency-bot auto-fix permissions and optional token; other jobs do not receive that secret. Full-project web lint remains report-only for existing lint debt, with type checks and strict PR lint unchanged. E2E remains an independent manual/nightly workflow that builds a temporary DailyCommit image from the checked-out source.
+
+After approval and merge, only the lightweight `Verify PR protections` job, publishing build and VM deployment run. They do not rerun the PR CI suite. Runtime migration, backup, health and HTTPS checks remain mandatory on the VM. Manual deployment runs are restricted to `dailycommit-dev` and must pass the same branch-rule guard. Deployment concurrency never automatically cancels a live update, and `flock` serializes VM updates.
 
 ### Required GitHub rules before deploying
 
-In **Settings → Rules → Rulesets**, edit the active ruleset for `dailycommit-dev`. Keep PR review required, enable **Require status checks to pass**, and enable **Require branches to be up to date before merging**. Do not bypass these protections when merging. The post-merge guard (`deploy/dev/verify_pr_gate.py`) checks active rules through GitHub's read-only branch-rules API using the automatic `GITHUB_TOKEN`; no new secret is required.
+After these changes are pushed and a PR has run CI, edit the active ruleset for `dailycommit-dev` in **Settings → Rules → Rulesets**:
 
-Require all these GitHub Actions check names (job names, not workflow names):
+1. Keep **Require a pull request before merging** and at least one approving review.
+2. Enable **Require status checks to pass**.
+3. Add just the GitHub Actions check **CI passed**. If the old individual checks are selected, remove them from the required list after switching to the combined check; they still run under CI.
+4. Enable **Require branches to be up to date before merging** and save the ruleset.
 
-- `test` (API Tests), `ruff` (API Lint), `unit` (Web Tests)
-- `next-lint`, `typecheck`
-- `Lockfiles in sync`
-- `Build (linux/amd64)`, `Build (linux/arm64)`
-- `Service image (api)`, `Service image (web)`, `Service image (collab)`
-- `Validate dev deployment`
+GitHub may not offer the new check until it has run on a PR. There is no separate new Secret. Do not add the nightly E2E job, the publishing build or Azure deployment as pre-merge requirements.
 
-These names are listed in `REQUIRED_CHECKS` in the guard and must be updated together if CI jobs are renamed. PR workflow-level path filters were removed so a required check cannot stay pending because its entire workflow was skipped. A target-branch update requires updating the PR and letting its checks pass again before merging. This trades repeat checks on merges for GitHub enforcing that the PR was checked against the current target branch.
-
-**Observed configuration:** the branch currently requires approval, but required status checks and the strict up-to-date policy have not been enabled. These local changes do not modify GitHub settings. Once this configuration is merged, deployment intentionally stops until those rules are enabled.
+`deploy/dev/verify_pr_gate.py` now requires `CI passed` plus the existing strict up-to-date and approving-review rules. It only reads GitHub rules; these repository changes do not edit the ruleset. A target-branch update requires updating the PR and passing CI against the current target branch before merging. Deployment deliberately stops if the combined check is not configured as required.
 
 ## One-time VM preparation
 
@@ -152,7 +150,7 @@ An existing organization without an admin is a partial bootstrap; this deploymen
 
 ## Persistent data and operations
 
-`docker-compose.dev.yml` runs Caddy, the internal app, pgvector PostgreSQL 16 and password-protected Redis. The app exposes port 80 only to its Docker network; it no longer publishes any host port. PostgreSQL and Redis have no published host ports. Redis uses AOF with `appendfsync everysec` and a persistent `/data` volume; normal restarts preserve it (an abrupt host failure can lose the latest second of writes).
+`docker-compose.dev.yml` runs Caddy, the internal app, pgvector PostgreSQL 16 and password-protected Redis. The app exposes port 80 only to its Docker network; it no longer publishes any host port. PostgreSQL binds only `127.0.0.1:5432` for local/SSH-forwarded access; Redis has no published host ports. Redis uses AOF with `appendfsync everysec` and a persistent `/data` volume; normal restarts preserve it (an abrupt host failure can lose the latest second of writes).
 
 Fixed Docker volumes:
 

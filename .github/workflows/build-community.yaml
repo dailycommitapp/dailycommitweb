@@ -18,13 +18,13 @@ on:
       - 'apps/e2e/**'
       - '.github/ISSUE_TEMPLATE/**'
       - 'LICENSE'
-  pull_request:
+  workflow_call:
 permissions:
   contents: read
 
-# See api-lint.yaml: one live run per PR, dev runs always finish.
+# PRs are called by ci.yml; direct push triggers retain their existing behavior.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: build-community-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

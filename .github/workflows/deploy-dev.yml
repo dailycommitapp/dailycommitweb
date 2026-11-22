@@ -4,8 +4,6 @@ on:
   push:
     branches: [dailycommit-dev]
   workflow_dispatch:
-  pull_request:
-    branches: [dailycommit-dev]
 
 permissions:
   contents: read
@@ -16,37 +14,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate:
-    name: Validate dev deployment
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Validate scripts and deployment safety
-        run: |
-          bash -n deploy/dev/deploy.sh
-          python3 -m unittest discover -s tests/deployment -v
-          python3 -m py_compile deploy/dev/validate_env.py deploy/dev/database.py deploy/dev/verify_pr_gate.py
-      - name: Validate Compose with synthetic credentials only
-        env:
-          DAILYCOMMIT_IMAGE: ghcr.io/dailycommitapp/dailycommitweb:validation-only
-        run: |
-          staging=$(mktemp -d)
-          trap 'rm -rf "$staging"' EXIT
-          cp docker-compose.dev.yml "$staging/"
-          cp deploy/dev/Caddyfile "$staging/Caddyfile"
-          touch "$staging/app.env" "$staging/db.env" "$staging/redis.env"
-          docker compose --project-directory "$staging" -f "$staging/docker-compose.dev.yml" config --quiet
-
-      - name: Validate Caddy configuration without starting HTTPS
-        run: |
-          docker run --rm --network none \
-            -v "$PWD/deploy/dev/Caddyfile:/etc/caddy/Caddyfile:ro" \
-            caddy:2.11-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-
   verify-pr-gate:
     name: Verify PR protections
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/dailycommit-dev'

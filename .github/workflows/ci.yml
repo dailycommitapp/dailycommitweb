@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  api-tests:
+    uses: ./.github/workflows/api-tests.yaml
+
+  api-lint:
+    uses: ./.github/workflows/api-lint.yaml
+
+  web-tests:
+    uses: ./.github/workflows/web-tests.yaml
+
+  web-lint:
+    uses: ./.github/workflows/web-lint.yaml
+
+  lockfiles:
+    # Preserve the existing dependency-bot auto-fix behavior, scoped to this job.
+    permissions:
+      contents: write
+    uses: ./.github/workflows/lockfiles.yaml
+    secrets:
+      LOCKFILE_SYNC_TOKEN: ${{ secrets.LOCKFILE_SYNC_TOKEN }}
+
+  docker-builds:
+    uses: ./.github/workflows/build-community.yaml
+
+  dev-validation:
+    if: github.base_ref == 'dailycommit-dev'
+    uses: ./.github/workflows/validate-dev.yml
+
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [api-tests, api-lint, web-tests, web-lint, lockfiles, docker-builds, dev-validation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every applicable CI job to succeed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUIRE_DEV_VALIDATION: ${{ github.base_ref == 'dailycommit-dev' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          results = json.loads(os.environ["RESULTS"])
+          expected = {"api-tests", "api-lint", "web-tests", "web-lint", "lockfiles", "docker-builds", "dev-validation"}
+          if set(results) != expected:
+              raise SystemExit("CI results are incomplete or unexpected.")
+          failed = []
+          for name, job in results.items():
+              result = job["result"]
+              optional = name == "dev-validation" and os.environ["REQUIRE_DEV_VALIDATION"] == "false"
+              if result != "success" and not (optional and result == "skipped"):
+                  failed.append(f"{name}: {result}")
+          if failed:
+              raise SystemExit("CI did not pass: " + ", ".join(failed))
+          print("All applicable CI jobs passed.")
+          PY
