@@ -392,9 +392,47 @@ class WorkflowTests(unittest.TestCase):
         archived = (ROOT / ".github/disabled-workflows/codecov-upload.yaml").read_text()
         self.assertIn("codecov/codecov-action", archived)
 
-    def test_compose_data_services_are_not_published(self):
+    def assert_postgres_loopback_only(self, ports):
+        self.assertEqual(len(ports), 1)
+        port = ports[0]
+        self.assertEqual(port.get("host_ip"), "127.0.0.1")
+        self.assertEqual(int(port["published"]), 5432)
+        self.assertEqual(int(port["target"]), 5432)
+        self.assertEqual(port.get("protocol", "tcp"), "tcp")
+
+    def test_compose_only_caddy_is_public_and_postgres_is_loopback_only(self):
         text = (ROOT / "docker-compose.dev.yml").read_text()
-        self.assertEqual(text.count("ports:"), 1)
+        # Parse Compose semantics, rather than counting literal YAML keys.
+        # Config rendering needs the Docker CLI/Compose plugin, not a daemon.
+        with tempfile.TemporaryDirectory() as directory:
+            staging = Path(directory)
+            shutil.copy(ROOT / "docker-compose.dev.yml", staging)
+            shutil.copy(ROOT / "deploy/dev/Caddyfile", staging / "Caddyfile")
+            for name in ("app.env", "db.env", "redis.env"):
+                (staging / name).touch()
+            result = subprocess.run(
+                ["docker", "compose", "--project-directory", str(staging),
+                 "-f", str(staging / "docker-compose.dev.yml"), "config", "--format", "json"],
+                env=dict(os.environ, DAILYCOMMIT_IMAGE="ghcr.io/dailycommitapp/dailycommitweb:validation-only"),
+                capture_output=True, text=True, check=True,
+            )
+        services = json.loads(result.stdout)["services"]
+        caddy_ports = services["caddy"].get("ports", [])
+        self.assertEqual(
+            sorted((int(p["target"]), int(p["published"]), p.get("protocol", "tcp")) for p in caddy_ports),
+            [(80, 80, "tcp"), (443, 443, "tcp")],
+        )
+        self.assert_postgres_loopback_only(services["db"].get("ports", []))
+        for name, service in services.items():
+            if name not in ("caddy", "db"):
+                self.assertFalse(service.get("ports"), name + " must remain internal")
+        # Prove that wildcard, omitted-host and IPv6-public DB mappings fail.
+        for host in ("0.0.0.0", "::", None):
+            with self.subTest(host=host), self.assertRaises(AssertionError):
+                port = {"target": 5432, "published": "5432", "protocol": "tcp"}
+                if host is not None:
+                    port["host_ip"] = host
+                self.assert_postgres_loopback_only([port])
         self.assertIn("pgvector/pgvector:pg16", text)
         self.assertIn("dailycommit-dev-postgres", text)
         self.assertIn("dailycommit-dev-content", text)

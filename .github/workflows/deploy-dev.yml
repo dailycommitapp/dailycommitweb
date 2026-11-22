@@ -61,7 +61,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/rules/branches/dailycommit-dev?per_page=100" --jq 'add' > "$RUNNER_TEMP/dev-branch-rules.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/rules/branches/dailycommit-dev?per_page=100" | jq 'add // []' > "$RUNNER_TEMP/dev-branch-rules.json"
           python3 deploy/dev/verify_pr_gate.py "$RUNNER_TEMP/dev-branch-rules.json"
 
   build:
