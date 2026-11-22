@@ -3,56 +3,114 @@ name: E2E
 permissions:
   contents: read
 
-# End-to-end UI acceptance suite (apps/e2e). It boots a full LearnHouse
-# self-host via the LearnHouse CLI (pulling the PUBLISHED app image) and
-# drives the UI with Playwright across every feature module under
-# apps/e2e/features/.
-#
-# Because it validates the *published image*, it is intentionally NOT a
-# per-PR gate (a PR's own code isn't in that image yet; chicken-and-egg).
-# It runs on demand and nightly, so it catches regressions in the shipped
-# self-host. To gate a PR on E2E, run it against an image built from the
-# branch (future enhancement).
+# Test this repository's checked-out commit, never an upstream app image.
+# Scheduled runs use GitHub's default branch; manual runs use the selected ref.
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 3 * * *' # nightly at 03:00 UTC
 
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e:
-    name: E2E (self-host acceptance)
+    name: E2E (DailyCommit source)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
+    env:
+      E2E_IMAGE: dailycommit-e2e:${{ github.sha }}
+      E2E_ENV_FILE: ${{ runner.temp }}/dailycommit-e2e.env
+      COMPOSE_PROJECT_NAME: dailycommit-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_BASE_URL: http://localhost:8080
+      E2E_SKIP_BOOT: '1'
+      E2E_PORT: '8080'
+      E2E_ORG_SLUG: default
+      E2E_ADMIN_EMAIL: admin@school.dev
+      # Synthetic account, created only in this disposable test database.
+      E2E_ADMIN_PASSWORD: E2eTestAdmin!234
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version-file: .bun-version
 
-      # Build the CLI from this repo so the suite installs the self-host with
-      # the current CLI (it still pulls the published app image).
-      - name: Build CLI
-        working-directory: apps/cli
-        run: |
-          bun install --frozen-lockfile
-          bun run build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build DailyCommit from this commit (no registry push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        timeout-minutes: 60
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          build-args: |
+            LEARNHOUSE_PUBLIC=true
+          load: true
+          push: false
+          tags: ${{ env.E2E_IMAGE }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=dailycommit-e2e-amd64
+          cache-to: type=gha,mode=max,scope=dailycommit-e2e-amd64
 
       - name: Install E2E deps
         working-directory: apps/e2e
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Install Playwright Chromium
         working-directory: apps/e2e
         run: bunx playwright install --with-deps chromium
 
-      - name: Run E2E suite (all feature modules)
+      - name: Generate disposable test credentials
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import secrets
+
+          keys = (
+              "E2E_POSTGRES_PASSWORD", "E2E_REDIS_PASSWORD",
+              "E2E_JWT_SECRET", "E2E_NEXTAUTH_SECRET", "E2E_COLLAB_KEY",
+          )
+          values = {key: secrets.token_hex(32) for key in keys}
+          for value in values.values():
+              print(f"::add-mask::{value}")
+          Path(os.environ["E2E_ENV_FILE"]).write_text(
+              "".join(f"{key}={value}\n" for key, value in values.items())
+          )
+          PY
+
+      - name: Start isolated DailyCommit test environment
+        run: |
+          set -Eeuo pipefail
+          docker image inspect "$E2E_IMAGE" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' | grep -Fx "$GITHUB_SHA"
+          docker compose --env-file "$E2E_ENV_FILE" -f apps/e2e/docker-compose.yml config --quiet
+          docker compose --env-file "$E2E_ENV_FILE" -f apps/e2e/docker-compose.yml up -d --wait --wait-timeout 300
+
+      - name: Run E2E suite against this DailyCommit commit
         working-directory: apps/e2e
-        env:
-          E2E_CLI: node ${{ github.workspace }}/apps/cli/dist/bin/learnhouse.js
-          E2E_ADMIN_PASSWORD: E2eTestAdmin!234
-          E2E_PORT: '8080'
+        timeout-minutes: 25
+        # E2E_BASE_URL skips the upstream CLI boot. Setup still waits for the
+        # API/org and creates the synthetic student and browser sessions.
         run: bun run test
+
+      - name: Show test container status on failure
+        if: failure()
+        run: |
+          if [[ -f "$E2E_ENV_FILE" ]]; then
+            docker compose --env-file "$E2E_ENV_FILE" -f apps/e2e/docker-compose.yml ps -a
+          fi
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
@@ -69,3 +127,16 @@ jobs:
           name: playwright-test-results
           path: apps/e2e/test-results/
           retention-days: 7
+
+      - name: Remove disposable test environment
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          if [[ -f "$E2E_ENV_FILE" ]]; then
+            # Only this run's isolated Compose project and volumes, never dev.
+            docker compose --env-file "$E2E_ENV_FILE" -f apps/e2e/docker-compose.yml down --volumes --remove-orphans
+          fi
+
+      - name: Remove disposable credentials
+        if: always()
+        run: rm -f -- "$E2E_ENV_FILE"

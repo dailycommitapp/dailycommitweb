@@ -1,0 +1,100 @@
+# Disposable E2E stack only. Never use docker-compose.dev.yml for these tests.
+# COMPOSE_PROJECT_NAME gives each CI run its own network and volumes.
+services:
+  app:
+    image: ${E2E_IMAGE:?Build a DailyCommit image and set E2E_IMAGE}
+    # Missing local builds must fail, rather than silently pulling another image.
+    pull_policy: never
+    init: true
+    ports:
+      - "127.0.0.1:${E2E_PORT:-8080}:80"
+    environment:
+      HOSTNAME: 0.0.0.0
+      LEARNHOUSE_PORT: '9000'
+      LEARNHOUSE_API_URL: http://127.0.0.1:9000
+      LEARNHOUSE_DOMAIN: localhost:${E2E_PORT:-8080}
+      NEXT_PUBLIC_LEARNHOUSE_API_URL: http://localhost:${E2E_PORT:-8080}/api/v1/
+      NEXT_PUBLIC_LEARNHOUSE_BACKEND_URL: http://localhost:${E2E_PORT:-8080}/
+      NEXT_PUBLIC_LEARNHOUSE_DOMAIN: localhost:${E2E_PORT:-8080}
+      NEXT_PUBLIC_LEARNHOUSE_TOP_DOMAIN: localhost
+      NEXT_PUBLIC_LEARNHOUSE_MULTI_ORG: 'false'
+      NEXT_PUBLIC_LEARNHOUSE_DEFAULT_ORG: ${E2E_ORG_SLUG:-default}
+      NEXT_PUBLIC_LEARNHOUSE_HTTPS: 'false'
+      NEXTAUTH_URL: http://localhost:${E2E_PORT:-8080}
+      NEXTAUTH_SECRET: ${E2E_NEXTAUTH_SECRET:?Generate test credentials}
+      LEARNHOUSE_AUTH_JWT_SECRET_KEY: ${E2E_JWT_SECRET:?Generate test credentials}
+      COLLAB_INTERNAL_KEY: ${E2E_COLLAB_KEY:?Generate test credentials}
+      NEXT_PUBLIC_COLLAB_URL: ws://localhost:${E2E_PORT:-8080}/collab
+      LEARNHOUSE_SQL_CONNECTION_STRING: postgresql://learnhouse:${E2E_POSTGRES_PASSWORD:?Generate test credentials}@db:5432/learnhouse
+      LEARNHOUSE_REDIS_CONNECTION_STRING: redis://:${E2E_REDIS_PASSWORD:?Generate test credentials}@redis:6379/0
+      LEARNHOUSE_REDIS_URL: redis://:${E2E_REDIS_PASSWORD:?Generate test credentials}@redis:6379/0
+      LEARNHOUSE_COOKIE_DOMAIN: .localhost
+      LEARNHOUSE_INITIAL_ADMIN_EMAIL: ${E2E_ADMIN_EMAIL:-admin@school.dev}
+      LEARNHOUSE_INITIAL_ADMIN_PASSWORD: ${E2E_ADMIN_PASSWORD:?Set a synthetic test admin password}
+      LEARNHOUSE_INITIAL_ORG_NAME: DailyCommit E2E
+      LEARNHOUSE_INITIAL_ORG_SLUG: ${E2E_ORG_SLUG:-default}
+      LEARNHOUSE_OSS: 'true'
+      NEXT_PUBLIC_LEARNHOUSE_OSS: 'true'
+      LEARNHOUSE_DEVELOPMENT_MODE: 'false'
+      LEARNHOUSE_DEMO_ENABLED: '0'
+      LEARNHOUSE_LOGFIRE_ENABLED: 'false'
+      LEARNHOUSE_IS_AI_ENABLED: 'false'
+      LEARNHOUSE_CONTENT_DELIVERY_TYPE: filesystem
+    volumes:
+      - content:/app/api/content
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --max-time, '8', http://127.0.0.1/api/v1/health]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+
+  # SSR requests to the browser-facing localhost:8080 URL stay in the app's
+  # network namespace and reach its internal nginx, matching the CLI stack.
+  ssr-fwd:
+    image: alpine/socat:1.8.1.3
+    network_mode: service:app
+    command: TCP-LISTEN:${E2E_PORT:-8080},fork,reuseaddr TCP:127.0.0.1:80
+    depends_on:
+      app:
+        condition: service_started
+
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: learnhouse
+      POSTGRES_DB: learnhouse
+      POSTGRES_PASSWORD: ${E2E_POSTGRES_PASSWORD:?Generate test credentials}
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U learnhouse -d learnhouse']
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:8.6.1-alpine
+    environment:
+      REDIS_PASSWORD: ${E2E_REDIS_PASSWORD:?Generate test credentials}
+    command:
+      - sh
+      - -ec
+      - 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"'
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -qx PONG']
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres:
+  redis:
+  content:

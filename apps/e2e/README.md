@@ -1,9 +1,10 @@
 # LearnHouse E2E: UI acceptance tests
 
-Browser-driven, human-like end-to-end tests for LearnHouse. The suite boots a
-real **self-host via the LearnHouse CLI** (`setup --ci`, pulling the published
-image) and drives the UI with Playwright like a real user. It validates the
-**shipped self-host product**.
+Browser-driven end-to-end tests for DailyCommit's customized LearnHouse code.
+The GitHub E2E workflow builds the root Dockerfile from the checked-out commit
+with `LEARNHOUSE_PUBLIC=true`, loads that image locally on the runner, and
+starts `docker-compose.yml` in this directory. Playwright tests that temporary
+DailyCommit installation, not an upstream application image or the Azure dev site.
 
 It is organized as a **modular, multi-feature** harness: shared infrastructure
 lives in `core/`, and each product area is a self-contained module under
@@ -49,15 +50,66 @@ feature-local things relatively. Specs never reach into another feature.
    - Reuse the shared sessions: `import { ADMIN_STATE, STUDENT_STATE } from '../../../core/sharedAuth'` then `test.use({ storageState: ADMIN_STATE })` (teacher) or `STUDENT_STATE` (student). This keeps the suite under the login rate limit.
 6. `playwright.config.ts` (`testDir: './features'`) discovers the new specs automatically.
 
-## Running locally
+## DailyCommit CI environment
 
-Requires Docker running, plus Node 20+ / bun.
+The existing daily schedule and manual trigger are retained. Scheduled runs
+checkout the repository's default branch; manual runs checkout the selected
+branch/ref. The application image is tagged `dailycommit-e2e:<commit-sha>` and
+labelled with the same commit. The workflow verifies that label before startup.
+It does not push this test image to a registry or deploy it.
+
+The test stack contains the source-built app, pgvector PostgreSQL 16, Redis and
+a small SSR port-forwarding sidecar. Only the app exposes a loopback host port.
+Each run gets its own Compose project, database, content and Redis volumes.
+Temporary random credentials are generated on the runner; no Azure or dev
+secrets are used. The app image has `pull_policy: never`, so a missing build
+fails instead of downloading an unrelated application image. PostgreSQL, Redis
+and the forwarding sidecar still use their standard third-party images.
+
+`E2E_BASE_URL=http://localhost:8080` skips the CLI's upstream image installation.
+The existing Playwright setup still waits for the API and organization, creates
+synthetic users and signs in. Workflow cleanup removes only this disposable
+Compose project and its volumes, including when setup or a test fails. It does
+not use `docker-compose.dev.yml` or connect to the dev server/database.
+
+To run the same source-built stack locally, from the repository root, use a
+unique test project name and a free port (8080 in this example):
+
+```bash
+export COMPOSE_PROJECT_NAME=dailycommit-e2e-local
+export E2E_IMAGE=dailycommit-e2e:local
+export E2E_ENV_FILE=$(mktemp)
+export E2E_PORT=8080
+export E2E_ADMIN_EMAIL=admin@school.dev
+export E2E_ADMIN_PASSWORD='E2eTestAdmin!234' # disposable test account only
+chmod 600 "$E2E_ENV_FILE"
+for key in E2E_POSTGRES_PASSWORD E2E_REDIS_PASSWORD E2E_JWT_SECRET E2E_NEXTAUTH_SECRET E2E_COLLAB_KEY; do
+  printf '%s=%s\n' "$key" "$(openssl rand -hex 32)" >> "$E2E_ENV_FILE"
+done
+docker build --build-arg LEARNHOUSE_PUBLIC=true -t "$E2E_IMAGE" .
+docker compose --env-file "$E2E_ENV_FILE" -f apps/e2e/docker-compose.yml up -d --wait --wait-timeout 300
+cd apps/e2e
+bun install --frozen-lockfile
+bunx playwright install chromium
+E2E_BASE_URL="http://localhost:$E2E_PORT" bun run test
+# Afterwards, from the repository root, even if tests failed:
+cd ../..
+docker compose --env-file "$E2E_ENV_FILE" -f apps/e2e/docker-compose.yml down --volumes --remove-orphans
+rm -f -- "$E2E_ENV_FILE"
+```
+
+## Other local modes
+
+Requires Docker running, plus Node 20+ / bun. The legacy no-URL mode below
+uses the LearnHouse CLI and can still download an upstream app image; it is
+not the mode used by DailyCommit CI. Reused instances must be disposable test
+environments: the suite creates and modifies users and learning content.
 
 ```bash
 cd apps/e2e
 bun install
 bunx playwright install chromium
-bun run test                              # boots a self-host, runs all features, tears it down
+bun run test                              # legacy CLI self-host (upstream app image)
 E2E_BASE_URL=http://localhost:8080 bun run test   # reuse a running instance (fast iteration)
 bun run test:headed                       # watch it drive the UI
 bun run report                            # open the HTML report after a run
@@ -74,7 +126,7 @@ bunx playwright test 06-manual-grading            # one spec by name
 
 | Var | Default | Purpose |
 | --- | --- | --- |
-| `E2E_BASE_URL` | unset | Use an existing instance; skips boot + teardown. |
+| `E2E_BASE_URL` | unset locally; `http://localhost:8080` in CI | Use a disposable running instance; skips CLI boot + teardown. CI cleanup is handled by the workflow. |
 | `E2E_PORT` | `8080` | HTTP port for the self-host. |
 | `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD` | `admin@school.dev` / `E2eTestAdmin!234` | Bootstrapped admin. |
 | `E2E_ORG_SLUG` | `default` | Bootstrapped org slug. |
